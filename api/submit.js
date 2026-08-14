@@ -52,12 +52,27 @@ export default async function handler(req, res) {
       body: JSON.stringify(payload)
     });
 
+    const upstreamBody = await upstream.text();
+
     if (!upstream.ok) {
-      return res.status(502).json({ ok: false, message: 'The intake service rejected the submission. Please try again later.' });
+      console.error('Foundry intake rejected submission', {
+        upstreamStatus: upstream.status,
+        upstreamStatusText: upstream.statusText,
+        upstreamBody: upstreamBody.slice(0, 4000)
+      });
+      return res.status(502).json({
+        ok: false,
+        code: 'INTAKE_REJECTED',
+        message: 'The intake service rejected the submission. Please try again later.'
+      });
     }
 
     return res.status(202).json({ ok: true, status: 'submitted' });
-  } catch {
+  } catch (error) {
+    console.error('Foundry intake request failed', {
+      name: error?.name || 'Error',
+      message: error?.message || String(error)
+    });
     return res.status(502).json({ ok: false, message: 'The intake service is temporarily unavailable.' });
   }
 }
