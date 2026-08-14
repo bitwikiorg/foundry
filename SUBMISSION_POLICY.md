@@ -2,34 +2,32 @@
 
 ## Scope
 
-Foundry currently accepts public GitHub repositories.
+Foundry accepts public GitHub repositories.
 
-A submission is a request for review, not a promise of indexing or publication. A Foundry Admission Judge may reject, defer or route repositories for manual review when they are private, inaccessible, unsafe to process, primarily generated spam, clearly malicious, legally restricted, technically unsupported, too large for current capacity, or below the current inclusion threshold.
+Submitting a repository is a request for review, not a promise of indexing or publication. Foundry may reject, defer, or route repositories for review when they are private, inaccessible, unsafe to process, spam, clearly malicious, legally restricted, technically unsupported, unusually large, or outside current capacity.
 
-Accepted repositories enter a capacity-limited queue and are processed when workers are available.
+## Submission agreement
 
-## Public indexing
+By submitting, you request and authorize Foundry to analyze the submitted public repository and, if accepted, publicly publish a BITwiki Atlas derived from it.
 
-If accepted, Foundry may analyze the public repository and publish a BITwiki Atlas containing generated documentation, source-linked summaries, code graphs, diagrams, ratings, metadata and machine-readable interfaces. Published Atlases may be cached and re-indexed as the public repository changes.
+A published Atlas may include generated documentation, source-linked summaries, code graphs, diagrams, ratings, repository metadata, provenance, and machine-readable interfaces. Published Atlases may be cached and refreshed when the public repository changes.
 
-Do not submit repositories containing credentials, secrets, confidential material, private code or material you are not authorized to submit.
-
-## Safety review
-
-Repository content is treated as untrusted data. Foundry may sanitize or quarantine repository content that attempts to manipulate automated analysis, expose secrets or provide instructions to internal agents. Safety review is separate from the admission decision about technical fit and available capacity.
+Do not submit repositories containing credentials, secrets, confidential material, private code, or material you are not authorized to submit.
 
 ## Email
 
-Email is collected to send submission, acceptance, rejection, processing, publication, correction or removal status related to the submitted repository.
+The submitted email may be used for repository status, Foundry/BITwiki updates, and occasional newsletters. Messages may be unsubscribed from at any time.
 
-Marketing consent is separate and optional. When explicitly selected, BITwiki may also send occasional Foundry/BITwiki product news or newsletters. Marketing messages must provide an unsubscribe mechanism.
+Submitter email addresses are never part of the public Atlas or public queue.
 
-Do not expose submitter email addresses in the public Atlas or public queue.
+## Safety review
+
+Repository content is treated as untrusted data. Foundry may sanitize or quarantine content that attempts to manipulate automated analysis, expose secrets, or provide instructions to internal agents.
 
 ## Removal and correction
 
-Repository owners or affected parties may request correction or removal through the Foundry GitHub issue tracker. Requests should be reviewed against provenance and current repository state.
+Repository owners or affected parties may request correction or removal through the Foundry GitHub issue tracker.
 
 ## Data minimization
 
-Store only what the intake and notification workflow requires: normalized repository URL, contact email, consent flags, timestamps, review status, queue state and operational audit metadata. Avoid logging email addresses or form bodies in application logs.
+Store only what intake, processing, indexing, and notification require: repository identity, contact email, timestamps, request/status information, queue state, index metadata, and operational diagnostics. Avoid logging email addresses or complete form bodies in application logs.
