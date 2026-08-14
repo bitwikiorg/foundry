@@ -5,7 +5,7 @@
   "rewrites": [
     {
       "source": "/atlas/:owner/:repo",
-      "destination": "/atlas.html"
+      "destination": "/atlas"
     }
   ]
 }
