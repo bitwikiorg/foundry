@@ -1,46 +1,45 @@
-# PRD — BitWiki Foundry
+# PRD — BITwiki Foundry
 
 ## Product
 
-**BitWiki Foundry** is the application/control plane. It analyzes repositories and produces **BitWiki Atlases**: continuously maintainable repository documentation products with human docs, rich visualizations, provenance, and machine-readable interfaces.
+**BITwiki Foundry** is the application/control plane. It analyzes repositories and publishes **BITwiki Atlas** output: maintainable repository knowledge with human documentation, visualizations, ratings, provenance, and machine-readable interfaces.
 
-**Foundry → analyzes repository → builds Atlas.**
+`Git repository → canonical RepoGraph → specialist agents → BITwiki Atlas`
 
-`Git repository → canonical RepoGraph → specialized agent factory → BitWiki Atlas`
+Durable generated output lives in [`bitwikiorg/atlas`](https://github.com/bitwikiorg/atlas). Foundry retains orchestration, planning, queueing, validation, and operational state.
 
 ## Primary users
+
 - developers entering unfamiliar codebases
-- maintainers who need current docs
-- AI coding/research agents that need structured repo context
+- maintainers who need current, inspectable docs and diagnostics
+- AI coding/research agents that need structured repository context
 
 ## Differentiators
-1. **Agent-native substrate** — graph, provenance, raw Markdown, manifests, FAQ cache, MCP-ready resources.
-2. **Visual intelligence suite** — Mermaid baseline plus dependency, call/control-flow, sequence, data-flow, clustering, complexity, churn, timeline, code-city, API and onboarding views.
-3. **Multi-agent factory** — bounded specialist stages instead of one LLM writing the whole wiki.
-4. **Safe generated style** — tailored Atlas presentation through validated theme tokens/templates rather than arbitrary fragile site rewrites.
-5. **Evidence first** — claims and visuals trace to source evidence or explicitly labeled inference/research.
 
-## MVP
-- GitHub/local repo intake pinned to commit SHA
-- file/module/symbol extraction
-- canonical RepoGraph
-- ranking + clustering
-- architecture synthesis
-- generated Atlas pages
-- Mermaid diagrams
-- bounded themes/templates
-- citations/provenance
-- FAQ materialization
-- `llms.txt`, `llms-full.txt`, sitemap, robots, JSON graph/index
-- static site build + hosting
-- incremental refresh from changed files
-- deterministic validation before publish
+1. **Graph-first evidence** — one canonical repository model supports docs, visuals, ratings, FAQ, audit, and machine outputs.
+2. **Specialist production** — bounded agent roles rather than one LLM writing everything.
+3. **Portable output** — Markdown, JSON, JSONL, provenance, graphs, and machine surfaces are first-class.
+4. **Template inheritance** — Atlas uses one base documentation contract plus thin repository-archetype overlays.
+5. **Independent verification** — generated work is audited, enhanced once, adjudicated, and only then published.
 
-## Visual families
-Architecture, dependency, symbol/call, control flow, sequence, data flow, state, ER/schema, inheritance/type, filesystem, clustering, complexity heatmaps, code-city/treemap, change coupling/churn, timeline/history, test topology, API topology, reading paths.
+## Output
 
-## FAQ cache
-Each FAQ entry stores question/aliases, answer, commit SHA, evidence dependencies/hash, generation version, audit state, and timestamps. Cache entries invalidate when evidence hashes change.
+A published repository version may contain:
 
-## Quality report
-Separate deterministic checks from LLM judgments. Score source coverage, provenance, architecture consistency, freshness, links/build, graph completeness, visual usefulness, onboarding, FAQ usefulness, machine readability, unsupported claims, security/license warnings.
+- README / overview
+- architecture and visual system map
+- quickstart and developer workflows
+- interfaces / API / CLI reference
+- configuration, data/state, operations, and security when applicable
+- testing and quality analysis
+- FAQ, troubleshooting, and glossary
+- codebase scorecard
+- repository history / churn / change coupling
+- `graph.json`
+- `scorecard.json`
+- `provenance.jsonl`
+- `llms.txt`
+- `llms-full.txt`
+- `manifest.json`
+
+Each generated version is pinned to an immutable source commit.
