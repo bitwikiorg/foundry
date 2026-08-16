@@ -144,7 +144,24 @@
     }
   };
 
+  function installHireCta(){
+    if(document.querySelector('#atlasHire'))return;
+    const footer=document.querySelector('.footer');
+    if(!footer)return;
+    const hire=document.createElement('section');
+    hire.id='atlasHire';
+    hire.className='atlas-bridge';
+    hire.innerHTML='<div><strong>Need more than an automated Atlas?</strong><p>BITwiki builds custom documentation systems, repository intelligence, and AI context engines around complex codebases. Focused audits and documentation engagements are typically $500–$1,000. Custom documentation machines and context engines start around $25K+.</p></div><a class="atlas-link" href="mailto:admin@bitwiki.org?subject=BITwiki%20Foundry%20project"><span>→</span> Hire BITwiki</a>';
+    footer.before(hire);
+
+    const navlinks=document.querySelector('.navlinks');
+    if(navlinks&&!navlinks.querySelector('a[href^="mailto:admin@bitwiki.org"]'))navlinks.insertAdjacentHTML('beforeend','<a href="mailto:admin@bitwiki.org?subject=BITwiki%20Foundry%20project">Hire us</a>');
+    const footerLinks=document.querySelector('.footer-links');
+    if(footerLinks&&!footerLinks.querySelector('a[href^="mailto:admin@bitwiki.org"]'))footerLinks.insertAdjacentHTML('beforeend','<a href="mailto:admin@bitwiki.org">Contact</a>');
+  }
+
   // Handles direct ?view=visuals / ?view=scorecard loads where atlas.js rendered before this patch loaded.
   if(document.querySelector('#atlasVisualExpand'))bindExpandOnly();
   if(currentTab()==='scorecard'&&state.atlas)renderScorecard();
+  installHireCta();
 })();
