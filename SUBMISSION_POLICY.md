@@ -16,7 +16,9 @@ Do not submit repositories containing credentials, secrets, confidential materia
 
 ## Email
 
-The submitted email may be used for repository status, Foundry/BITwiki updates, and occasional newsletters. Messages may be unsubscribed from at any time.
+Foundry does not send a submission-confirmation email or newsletters from the repository submission form.
+
+If an Atlas is successfully published, Foundry may send the submitted address one transactional completion email containing the public Atlas link. Expect this message from an `@bitwiki.org` address. The current operational contact is `admin@bitwiki.org`.
 
 Submitter email addresses are never part of the public Atlas or public queue.
 
@@ -26,8 +28,8 @@ Repository content is treated as untrusted data. Foundry may sanitize or quarant
 
 ## Removal and correction
 
-Repository owners or affected parties may request correction or removal through the Foundry GitHub issue tracker.
+Repository owners or affected parties may request correction or removal through the Foundry GitHub issue tracker or by contacting `admin@bitwiki.org`.
 
 ## Data minimization
 
-Store only what intake, processing, indexing, and notification require: repository identity, contact email, timestamps, request/status information, queue state, index metadata, and operational diagnostics. Avoid logging email addresses or complete form bodies in application logs.
+Store only what intake, processing, indexing, and completion notification require: repository identity, contact email, timestamps, request/status information, queue state, index metadata, and operational diagnostics. Avoid logging email addresses or complete form bodies in application logs.
