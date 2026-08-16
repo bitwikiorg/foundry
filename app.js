@@ -4,7 +4,7 @@ const fmt=n=>new Intl.NumberFormat('en-US',{notation:Number(n)>=1000000?'compact
 const int=n=>Number.isFinite(Number(n))?Number(n):0;
 function track(name,data={}){try{window.va&&window.va('event',{name,data})}catch{}}
 function repoHostOK(value){try{const u=new URL(value);return u.protocol==='https:'&&u.hostname.toLowerCase()==='github.com'&&u.pathname.split('/').filter(Boolean).length>=2}catch{return false}}
-function esc(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+function esc(s){return String(s??'').replace(/[&<>'\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','\"':'&quot;'}[c]))}
 function repoIdentity(a){const parts=String(a.repo_id||'').split('/');return {owner:a.owner||parts[0]||'',repo:a.repo||a.name||parts[1]||''}}
 function repoViews(a){return int(state.metrics.by_repo?.[String(a.repo_id||'').toLowerCase()]?.pageviews ?? a.impressions)}
 function repoCard(a){
@@ -61,5 +61,35 @@ $('#repoGrid').addEventListener('click',e=>{const a=e.target.closest('a[data-eve
 $('#repoForm').addEventListener('submit',e=>{e.preventDefault();const email=$('#email').value.trim(),repo_url=$('#repo').value.trim();$('#formStatus').textContent='';if(!repoHostOK(repo_url)){const x=$('#formStatus');x.className='status error';x.textContent='Enter a public GitHub repository URL, for example https://github.com/owner/repo.';return}state.pending={email,repo_url};$('#modalStatus').textContent='';$('#reviewModal').classList.add('open')});
 function closeModal(){$('#reviewModal').classList.remove('open')}
 $('#cancelModal').addEventListener('click',closeModal);$('#reviewModal').addEventListener('click',e=>{if(e.target.id==='reviewModal')closeModal()});
-$('#confirmSubmit').addEventListener('click',async()=>{if(!state.pending)return;const b=$('#confirmSubmit'),status=$('#modalStatus');b.disabled=true;b.textContent='Queuing…';status.textContent='';try{const r=await fetch('/api/submit',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(state.pending)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||'Submission intake is unavailable.');track('submission_accepted',{repository:new URL(state.pending.repo_url).pathname.replace(/^\/|\/$/g,'').toLowerCase()});status.className='status ok';status.textContent='Repository request accepted into the Foundry queue.';b.textContent='Queued';setTimeout(()=>{closeModal();$('#repoForm').reset();state.pending=null;b.disabled=false;b.textContent='Agree & queue repository'},850)}catch(err){status.className='status error';status.textContent=err.message;b.disabled=false;b.textContent='Agree & queue repository'}});
+$('#confirmSubmit').addEventListener('click',async()=>{if(!state.pending)return;const b=$('#confirmSubmit'),status=$('#modalStatus');b.disabled=true;b.textContent='Queuing…';status.textContent='';try{const r=await fetch('/api/submit',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(state.pending)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||'Submission intake is unavailable.');track('submission_accepted',{repository:new URL(state.pending.repo_url).pathname.replace(/^\/|\/$/g,'').toLowerCase()});status.className='status ok';status.textContent="Queued. We'll email you from @bitwiki.org when your Atlas is ready.";b.textContent='Queued';setTimeout(()=>{closeModal();$('#repoForm').reset();state.pending=null;b.disabled=false;b.textContent='Agree & queue repository'},1100)}catch(err){status.className='status error';status.textContent=err.message;b.disabled=false;b.textContent='Agree & queue repository'}});
+
+function applyLaunchLayer(){
+  const formNote=document.querySelector('.repo-form .form-note');
+  if(formNote)formNote.textContent="Public repositories only. Foundry reads your repository; it never modifies it. We send no submission email. If your Atlas is published, we'll email you once from @bitwiki.org with the link.";
+
+  const notices=[...document.querySelectorAll('#reviewModal .notice')];
+  if(notices[3])notices[3].innerHTML='<strong>One completion email.</strong> We do not send a submission confirmation or newsletters from this form. If your Atlas is published, we will email the address you provide once with the result link. Expect mail from <strong>@bitwiki.org</strong>.';
+
+  const agreement=document.querySelector('#reviewModal .agreement');
+  if(agreement)agreement.innerHTML='Selecting <strong>Agree &amp; queue repository</strong> requests public indexing under these terms.';
+
+  const submitIntro=document.querySelector('#submit .submit-grid > div > p');
+  if(submitIntro)submitIntro.textContent='Send a public GitHub repository. Foundry reviews it, pins the accepted source version, builds the Atlas, and emails you once when the published result is ready.';
+
+  if(!document.querySelector('#hire')){
+    const bridge=document.querySelector('.atlas-bridge');
+    if(bridge){
+      const hire=document.createElement('section');
+      hire.id='hire';
+      hire.className='atlas-bridge';
+      hire.innerHTML='<div><strong>Need a deeper codebase dive?</strong><p>BITwiki builds custom documentation systems, repository intelligence, and AI context engines. Focused audits and documentation engagements are typically $500–$1,000. Custom documentation machines and context engines start around $25K+.</p></div><a class="atlas-link" href="mailto:admin@bitwiki.org?subject=BITwiki%20Foundry%20project"><span>→</span> admin@bitwiki.org</a>';
+      bridge.before(hire);
+    }
+  }
+
+  const footerLinks=document.querySelector('.footer-links');
+  if(footerLinks&&!footerLinks.querySelector('a[href^="mailto:admin@bitwiki.org"]'))footerLinks.insertAdjacentHTML('beforeend','<a href="mailto:admin@bitwiki.org">Contact</a>');
+}
+
+applyLaunchLayer();
 loadData();
