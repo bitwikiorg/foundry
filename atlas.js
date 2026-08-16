@@ -3,9 +3,9 @@ const fmt=n=>new Intl.NumberFormat('en-US',{notation:Number(n)>=1000000?'compact
 const int=n=>Number.isFinite(Number(n))?Number(n):0;
 const esc=s=>String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const enc=s=>encodeURIComponent(String(s??''));
-const state={atlas:null,navigation:null,visualIndex:null,graph:null,metrics:null,activeTab:'docs',activeDoc:'',activeCy:null,activeVisual:null,showEdgeLabels:false,hideExternal:false,visualCache:new Map(),docCache:new Map(),mermaidScale:1};
+const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
+const state={atlas:null,navigation:null,visualIndex:null,graph:null,manifest:null,metrics:null,activeTab:'docs',activeDoc:'',activeCy:null,activeVisual:null,showEdgeLabels:false,hideExternal:true,visualCache:new Map(),docCache:new Map(),scorecard:null};
 const ALLOWED_TABS=new Set(['docs','visuals','scorecard','evidence','versions']);
-
 function track(name,data={}){try{window.va&&window.va('event',{name,data})}catch{}}
 function pathRepo(){const p=location.pathname.split('/').filter(Boolean);return p[0]==='atlas'&&p.length>=3?`${decodeURIComponent(p[1])}/${decodeURIComponent(p[2])}`.toLowerCase():''}
 function identity(a){const repoId=String(a?.repo_id||'').toLowerCase();return {repoId,owner:a?.owner||repoId.split('/')[0]||'',repo:a?.repo||repoId.split('/')[1]||'',sha:String(a?.source_sha||'')}}
@@ -16,421 +16,58 @@ async function artifactJson(a,path){return getJson(artifactUrl(a,path))}
 async function artifactText(a,path){return getText(artifactUrl(a,path))}
 function action(url,label,event,repoId,primary=false){return url?`<a ${primary?'class="primary-link"':''} href="${esc(url)}" data-event="${event}" data-repo="${esc(repoId)}" target="_blank" rel="noopener"><span>${esc(label)}</span><span>↗</span></a>`:''}
 function renderNotFound(){root.innerHTML=`<div class="atlas-not-found"><div class="eyebrow">Atlas not found</div><h1>No map here.</h1><p>This repository is not currently published in BITwiki Atlas.</p><a class="btn" href="/#index">Back to index</a></div>`}
-
-function currentTab(){
-  const t=new URLSearchParams(location.search).get('view');
-  return ALLOWED_TABS.has(t)?t:'docs';
-}
+function currentTab(){const t=new URLSearchParams(location.search).get('view');return ALLOWED_TABS.has(t)?t:'docs'}
 function requestedDoc(){return new URLSearchParams(location.search).get('doc')||''}
-function setUrl(tab,doc=''){
-  const u=new URL(location.href);
-  if(tab==='docs')u.searchParams.delete('view'); else u.searchParams.set('view',tab);
-  if(tab==='docs'&&doc)u.searchParams.set('doc',doc); else u.searchParams.delete('doc');
-  history.replaceState({},'',u);
-}
-
-async function preload(a){
-  const [navigation,visualIndex,graph]=await Promise.all([
-    artifactJson(a,'navigation.json').catch(()=>({groups:[]})),
-    artifactJson(a,'visuals/index.json').catch(()=>({views:[]})),
-    artifactJson(a,'graph.json').catch(()=>({}))
-  ]);
-  state.navigation=navigation;
-  state.visualIndex=visualIndex;
-  state.graph=graph;
-}
-
-function metricGrid(a,metrics){
-  const {repoId}=identity(a);
-  const impressions=int(metrics?.by_repo?.[repoId]?.pageviews??a.impressions);
-  const versions=int(a.version_count||a.indexed_count||1);
-  const words=int(a.words_generated||a.generated_words);
-  const files=int(a.source_files_mapped||a.source_file_count||a.file_count);
-  const visuals=int(a.visual_count);
-  const score=Number.isFinite(Number(a.foundry_score))?Number(a.foundry_score).toFixed(0):'—';
-  return `<div class="atlas-summary">
-    <div class="atlas-summary-score"><strong>${score}</strong><span>Foundry score</span></div>
-    <div><strong>${words?fmt(words):'—'}</strong><span>Words</span></div>
-    <div><strong>${files?fmt(files):'—'}</strong><span>Files mapped</span></div>
-    <div><strong>${visuals?fmt(visuals):'—'}</strong><span>Visuals</span></div>
-    <div><strong>${fmt(versions)}</strong><span>Versions</span></div>
-    <div><strong>${impressions?fmt(impressions):'—'}</strong><span>Views</span></div>
-  </div>`;
-}
-
-function renderShell(a,metrics){
-  const {repoId,owner,repo,sha}=identity(a);
-  document.title=`${owner}/${repo} · BITwiki Atlas`;
-  root.innerHTML=`<header class="atlas-project-head">
-    <div class="atlas-breadcrumb">BITwiki Atlas / ${esc(owner)} / ${esc(repo)}</div>
-    <div class="atlas-project-row">
-      <div><h1>${esc(repo)}</h1><p>${esc(a.description||`Documentation and repository intelligence generated from ${owner}/${repo}.`)}</p></div>
-      <div class="atlas-source-pill"><span>PINNED SOURCE</span><code>${esc(sha.slice(0,12)||'—')}</code></div>
-    </div>
-    ${metricGrid(a,metrics)}
-    <nav class="atlas-tabs" aria-label="Atlas views">
-      ${[['docs','Docs'],['visuals','Visuals'],['scorecard','Scorecard'],['evidence','Evidence'],['versions','Versions']].map(([id,label])=>`<button type="button" class="atlas-tab" data-tab="${id}">${label}${id==='visuals'&&a.visual_count?` <span>${int(a.visual_count)}</span>`:''}</button>`).join('')}
-    </nav>
-  </header>
-  <div id="atlasSurface" class="atlas-surface"></div>`;
-  root.querySelectorAll('.atlas-tab').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));
-  track('atlas_page_loaded',{repo_id:repoId});
-}
-
-async function showTab(tab){
-  if(!ALLOWED_TABS.has(tab))tab='docs';
-  state.activeTab=tab;
-  document.querySelectorAll('.atlas-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
-  if(state.activeCy){try{state.activeCy.destroy()}catch{} state.activeCy=null}
-  if(tab==='docs')await renderDocs();
-  if(tab==='visuals')await renderVisualBrowser();
-  if(tab==='scorecard')await renderStandaloneDoc('docs/scorecard.md','Scorecard');
-  if(tab==='evidence')renderEvidence();
-  if(tab==='versions')renderVersions();
-  if(tab!=='docs')setUrl(tab);
-}
-
-function allPages(){
-  return (state.navigation?.groups||[]).flatMap(g=>(g.pages||[]).map(p=>({...p,group:g.title})));
-}
+function setUrl(tab,doc=''){const u=new URL(location.href);if(tab==='docs')u.searchParams.delete('view');else u.searchParams.set('view',tab);if(tab==='docs'&&doc)u.searchParams.set('doc',doc);else u.searchParams.delete('doc');history.replaceState({},'',u)}
+async function preload(a){const [navigation,visualIndex,graph,manifest]=await Promise.all([artifactJson(a,'navigation.json').catch(()=>({groups:[]})),artifactJson(a,'visuals/index.json').catch(()=>({views:[]})),artifactJson(a,'graph.json').catch(()=>({})),artifactJson(a,'manifest.json').catch(()=>({}))]);state.navigation=navigation;state.visualIndex=visualIndex;state.graph=graph;state.manifest=manifest}
+function metricGrid(a,metrics){const {repoId}=identity(a);const impressions=int(metrics?.by_repo?.[repoId]?.pageviews??a.impressions);const versions=int(a.version_count||a.indexed_count||1),words=int(a.words_generated||a.generated_words),files=int(a.source_files_mapped||a.source_file_count||a.file_count),visuals=int(a.visual_count);const score=Number.isFinite(Number(a.foundry_score))?Number(a.foundry_score).toFixed(0):'—';return `<div class="atlas-summary"><div class="atlas-summary-score"><strong>${score}</strong><span>Foundry score</span></div><div><strong>${words?fmt(words):'—'}</strong><span>Words</span></div><div><strong>${files?fmt(files):'—'}</strong><span>Files mapped</span></div><div><strong>${visuals?fmt(visuals):'—'}</strong><span>Visuals</span></div><div><strong>${fmt(versions)}</strong><span>Versions</span></div><div><strong>${impressions?fmt(impressions):'—'}</strong><span>Views</span></div></div>`}
+function renderShell(a,metrics){const {repoId,owner,repo,sha}=identity(a);document.title=`${owner}/${repo} · BITwiki Atlas`;root.innerHTML=`<header class="atlas-project-head"><div class="atlas-breadcrumb">BITwiki Atlas / ${esc(owner)} / ${esc(repo)}</div><div class="atlas-project-row"><div><h1>${esc(repo)}</h1><p>${esc(a.description||`Documentation and repository intelligence generated from ${owner}/${repo}.`)}</p></div><div class="atlas-source-pill"><span>PINNED SOURCE</span><code>${esc(sha.slice(0,12)||'—')}</code></div></div>${metricGrid(a,metrics)}<nav class="atlas-tabs" aria-label="Atlas views">${[['docs','Docs'],['visuals','Visuals'],['scorecard','Scorecard'],['evidence','Evidence'],['versions','Versions']].map(([id,label])=>`<button type="button" class="atlas-tab" data-tab="${id}">${label}${id==='visuals'&&a.visual_count?` <span>${int(a.visual_count)}</span>`:''}</button>`).join('')}</nav></header><div id="atlasSurface" class="atlas-surface"></div>`;root.querySelectorAll('.atlas-tab').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));track('atlas_page_loaded',{repo_id:repoId})}
+async function showTab(tab){if(!ALLOWED_TABS.has(tab))tab='docs';state.activeTab=tab;document.querySelectorAll('.atlas-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));if(state.activeCy){try{state.activeCy.destroy()}catch{}state.activeCy=null}if(tab==='docs')await renderDocs();if(tab==='visuals')await renderVisualBrowser();if(tab==='scorecard')await renderScorecard();if(tab==='evidence')renderEvidence();if(tab==='versions')renderVersions();if(tab!=='docs')setUrl(tab)}
+function allPages(){return (state.navigation?.groups||[]).flatMap(g=>(g.pages||[]).map(p=>({...p,group:g.title})))}
 function docExists(path){return allPages().some(p=>p.path===path)}
-function defaultDoc(){
-  const pages=allPages();
-  return pages.find(p=>p.path==='docs/overview.md')?.path||
-         pages.find(p=>p.path==='README.md')?.path||
-         pages[0]?.path||'README.md';
-}
-function docNav(active){
-  const groups=state.navigation?.groups||[];
-  return `<aside class="atlas-doc-sidebar">
-    <div class="atlas-doc-sidebar-head"><strong>Documentation</strong><button id="atlasNavClose" aria-label="Close navigation">×</button></div>
-    ${groups.map(g=>`<section class="atlas-doc-nav-group"><h3>${esc(g.title||'Documentation')}</h3>${g.description?`<p>${esc(g.description)}</p>`:''}<div>${(g.pages||[]).map(p=>`<button type="button" class="atlas-doc-link ${p.path===active?'active':''}" data-doc="${esc(p.path)}">${esc(p.title||p.path)}</button>`).join('')}</div></section>`).join('')}
-  </aside>`;
-}
-function docTools(path){
-  const {repoId}=identity(state.atlas);
-  const github=state.atlas.github_docs_url?`${state.atlas.github_docs_url}/${path.replace(/^README\.md$/,'README.md')}`:'';
-  return `<div class="atlas-doc-tools">
-    <button type="button" id="atlasNavOpen">Contents</button>
-    ${action(github,'GitHub','doc_github_open',repoId)}
-  </div>`;
-}
-async function renderDocs(){
-  const surface=document.querySelector('#atlasSurface');
-  if(!surface)return;
-  const requested=requestedDoc();
-  const initial=docExists(requested)?requested:defaultDoc();
-  surface.innerHTML=`<div class="atlas-doc-app">${docNav(initial)}<main class="atlas-doc-main">${docTools(initial)}<article id="atlasArticle" class="atlas-article"><div class="atlas-loading-inline">Loading documentation…</div></article></main><aside id="atlasToc" class="atlas-toc"></aside></div>`;
-  bindDocNav();
-  await openDoc(initial,false);
-}
-function bindDocNav(){
-  document.querySelectorAll('.atlas-doc-link').forEach(b=>b.addEventListener('click',()=>openDoc(b.dataset.doc,true)));
-  document.querySelector('#atlasNavOpen')?.addEventListener('click',()=>document.querySelector('.atlas-doc-sidebar')?.classList.add('open'));
-  document.querySelector('#atlasNavClose')?.addEventListener('click',()=>document.querySelector('.atlas-doc-sidebar')?.classList.remove('open'));
-}
-function slugify(s){
-  return String(s||'section').toLowerCase().trim().replace(/<[^>]+>/g,'').replace(/[^a-z0-9\s-]/g,'').replace(/\s+/g,'-').replace(/-+/g,'-').slice(0,80)||'section';
-}
-function renderMarkdown(md){
-  if(!window.marked||!window.DOMPurify)return `<pre>${esc(md)}</pre>`;
-  const raw=window.marked.parse(String(md||''),{gfm:true,breaks:false});
-  return window.DOMPurify.sanitize(raw,{USE_PROFILES:{html:true},ADD_ATTR:['target','rel']});
-}
-function evidenceMap(){
-  const ev=state.graph?.deterministic?.evidence||state.graph?.evidence||[];
-  return new Map(ev.map(e=>[String(e.id),e]));
-}
-function decorateEvidence(article){
-  const map=evidenceMap();
-  if(!map.size)return;
-  const walker=document.createTreeWalker(article,NodeFilter.SHOW_TEXT);
-  const nodes=[]; let n;
-  while((n=walker.nextNode())){
-    if(!/\[E\d{3,}\]/.test(n.nodeValue||''))continue;
-    if(n.parentElement?.closest('code,pre,a,button'))continue;
-    nodes.push(n);
-  }
-  for(const textNode of nodes){
-    const text=textNode.nodeValue||'';
-    const frag=document.createDocumentFragment();
-    let last=0;
-    text.replace(/\[(E\d{3,})\]/g,(m,id,offset)=>{
-      if(offset>last)frag.append(document.createTextNode(text.slice(last,offset)));
-      const rec=map.get(id);
-      if(rec){
-        const b=document.createElement('button');
-        b.type='button'; b.className='atlas-evidence-ref'; b.textContent=`[${id}]`;
-        b.title=`${rec.path||id} · pinned source`;
-        b.addEventListener('click',()=>window.open(rec.source_url,'_blank','noopener'));
-        frag.append(b);
-      }else frag.append(document.createTextNode(m));
-      last=offset+m.length;
-      return m;
-    });
-    if(last<text.length)frag.append(document.createTextNode(text.slice(last)));
-    textNode.replaceWith(frag);
-  }
-}
-function decorateHeadings(article){
-  const used=new Set();
-  for(const h of article.querySelectorAll('h1,h2,h3')){
-    let id=slugify(h.textContent); let i=2;
-    while(used.has(id))id=`${id}-${i++}`;
-    used.add(id); h.id=id;
-    const a=document.createElement('a'); a.className='atlas-heading-anchor'; a.href=`#${id}`; a.textContent='#'; a.setAttribute('aria-label','Link to section');
-    h.append(a);
-  }
-}
-function buildToc(article){
-  const toc=document.querySelector('#atlasToc');
-  if(!toc)return;
-  const hs=[...article.querySelectorAll('h2,h3')];
-  toc.innerHTML=hs.length?`<div class="atlas-toc-inner"><strong>On this page</strong>${hs.map(h=>`<a class="${h.tagName==='H3'?'sub':''}" href="#${esc(h.id)}">${esc(h.childNodes[0]?.textContent||h.textContent.replace(/#$/,''))}</a>`).join('')}</div>`:'';
-}
-function resolveDocHref(current,href){
-  if(!href||href.startsWith('#')||/^[a-z][a-z0-9+.-]*:/i.test(href))return null;
-  try{
-    const u=new URL(href,`https://atlas.local/${current}`);
-    const path=decodeURIComponent(u.pathname.replace(/^\//,''));
-    return docExists(path)?path:null;
-  }catch{return null}
-}
-function bindArticleLinks(article,current){
-  article.querySelectorAll('a[href]').forEach(a=>{
-    const href=a.getAttribute('href')||'';
-    const doc=resolveDocHref(current,href);
-    if(doc){
-      a.addEventListener('click',e=>{e.preventDefault();openDoc(doc,true)});
-      return;
-    }
-    if(/^https?:/i.test(href)){a.target='_blank';a.rel='noopener'}
-  });
-}
-async function renderMermaidBlocks(article){
-  if(!window.mermaid)return;
-  const blocks=[...article.querySelectorAll('pre code.language-mermaid,code.language-mermaid')];
-  if(!blocks.length)return;
-  try{window.mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:'dark',fontFamily:'Inter, system-ui, sans-serif',suppressErrorRendering:true})}catch{}
-  let i=0;
-  for(const code of blocks){
-    const pre=code.closest('pre')||code;
-    const holder=document.createElement('div'); holder.className='atlas-inline-mermaid';
-    try{
-      const id=`atlas-inline-mermaid-${Date.now()}-${i++}`;
-      const out=await window.mermaid.render(id,code.textContent||'');
-      holder.innerHTML=out.svg;
-    }catch{
-      holder.innerHTML=`<div class="atlas-diagram-error">Diagram could not be rendered. Source preserved below.</div><pre><code>${esc(code.textContent||'')}</code></pre>`;
-    }
-    pre.replaceWith(holder);
-  }
-}
-async function openDoc(path,push=true){
-  if(!docExists(path)&&path!=='docs/scorecard.md')path=defaultDoc();
-  state.activeDoc=path;
-  document.querySelectorAll('.atlas-doc-link').forEach(b=>b.classList.toggle('active',b.dataset.doc===path));
-  document.querySelector('.atlas-doc-sidebar')?.classList.remove('open');
-  const article=document.querySelector('#atlasArticle');
-  if(!article)return;
-  article.innerHTML='<div class="atlas-loading-inline">Loading documentation…</div>';
-  try{
-    let md=state.docCache.get(path);
-    if(md===undefined){md=await artifactText(state.atlas,path);state.docCache.set(path,md)}
-    article.innerHTML=renderMarkdown(md);
-    decorateHeadings(article);
-    decorateEvidence(article);
-    bindArticleLinks(article,path);
-    await renderMermaidBlocks(article);
-    buildToc(article);
-    if(push)setUrl('docs',path);
-    track('atlas_doc_open',{repo_id:state.atlas.repo_id,path});
-    document.querySelector('.atlas-doc-main')?.scrollTo?.({top:0});
-  }catch{
-    article.innerHTML='<div class="atlas-doc-error"><h2>Document unavailable</h2><p>This Atlas document could not be loaded.</p></div>';
-  }
-}
-
-async function renderStandaloneDoc(path,title){
-  const surface=document.querySelector('#atlasSurface');
-  if(!surface)return;
-  surface.innerHTML=`<div class="atlas-standalone"><div class="atlas-section-kicker">${esc(title)}</div><article id="atlasArticle" class="atlas-article"><div class="atlas-loading-inline">Loading…</div></article></div>`;
-  const article=document.querySelector('#atlasArticle');
-  try{
-    let md=state.docCache.get(path);
-    if(md===undefined){md=await artifactText(state.atlas,path);state.docCache.set(path,md)}
-    article.innerHTML=renderMarkdown(md);decorateHeadings(article);decorateEvidence(article);bindArticleLinks(article,path);await renderMermaidBlocks(article);
-  }catch{article.innerHTML='<div class="atlas-doc-error">Artifact unavailable.</div>'}
-}
-
-function typeColor(t){
-  const x=String(t||'').toLowerCase();
-  if(/repository|system|root/.test(x))return '#dcff68';
-  if(/third.?party|external|dependency|deploy/.test(x))return '#ffae42';
-  if(/evidence|source|document/.test(x))return '#b76cff';
-  if(/state|data|store|memory/.test(x))return '#38ddff';
-  if(/actor|service|module|component|directory|file|step|action/.test(x))return '#51fa8d';
-  if(/decision|guard|auth|risk/.test(x))return '#ff7d9a';
-  return '#aeb8c4';
-}
-function layoutOptions(view){
-  const family=view?.layout?.family||view?.presentation?.layout||'force';
-  const direction={LR:'RIGHT',RL:'LEFT',TB:'DOWN',BT:'UP'}[view?.layout?.direction||view?.presentation?.direction]||'RIGHT';
-  if(family==='layered'||family==='tree')return {name:'elk',fit:true,padding:72,nodeDimensionsIncludeLabels:true,elk:{algorithm:family==='tree'?'mrtree':'layered','elk.direction':direction,'elk.edgeRouting':'ORTHOGONAL','elk.spacing.nodeNode':'56','elk.layered.spacing.nodeNodeBetweenLayers':'95','elk.padding':'[top=48,left=48,bottom=48,right=48]'}};
-  if(family==='radial')return {name:'concentric',fit:true,padding:70,minNodeSpacing:70,levelWidth:()=>1,concentric:n=>Number(n.data('importance')||0.5)};
-  if(family==='grid')return {name:'grid',fit:true,padding:70,avoidOverlap:true,avoidOverlapPadding:32};
-  return {name:'cose',fit:true,padding:70,animate:false,nodeRepulsion:14000,idealEdgeLength:170,edgeElasticity:80,gravity:.22,numIter:1600};
-}
-function cyElements(view){
-  const nodeIds=new Set((view.nodes||[]).map(n=>String(n.id)));
-  const nodes=(view.nodes||[]).map(n=>({data:{id:String(n.id),label:String(n.label||n.id),type:String(n.type||'entity'),importance:Number(n.importance??.5),evidence_refs:n.evidence_refs||[],source_paths:n.source_paths||[],description:n.description||'',parent:n.group&&nodeIds.has(String(n.group))?String(n.group):undefined}}));
-  const edges=(view.edges||[]).map((e,i)=>({data:{id:String(e.id||`e-${i}`),source:String(e.source??e.from),target:String(e.target??e.to),label:String(e.label||''),type:String(e.type||'related_to'),confidence:Number(e.confidence??1),evidence_refs:e.evidence_refs||[]}}));
-  return [...nodes,...edges];
-}
-function graphDetail(node){
-  if(!node)return `<div class="atlas-detail-empty">Select a node to inspect what it means and which pinned sources support it.</div>`;
-  const d=node.data(),refs=Array.isArray(d.evidence_refs)?d.evidence_refs:[],paths=Array.isArray(d.source_paths)?d.source_paths:[];
-  const em=evidenceMap();
-  return `<div class="atlas-selected-head"><span>${esc(d.type||'entity')}</span><h4>${esc(d.label)}</h4>${d.description?`<p>${esc(d.description)}</p>`:''}</div>
-    ${paths.length?`<div class="atlas-detail-group"><strong>Source paths</strong>${paths.map(x=>`<div class="atlas-detail-chip">${esc(x)}</div>`).join('')}</div>`:''}
-    ${refs.length?`<div class="atlas-detail-group"><strong>Evidence</strong>${refs.map(id=>{const r=em.get(String(id));return r?.source_url?`<a class="atlas-detail-chip evidence" href="${esc(r.source_url)}" target="_blank" rel="noopener">${esc(id)} · ${esc(r.path||'source')} ↗</a>`:`<div class="atlas-detail-chip">${esc(id)}</div>`}).join('')}</div>`:''}`;
-}
-function filterVisualCy(){
-  const cy=state.activeCy;if(!cy)return;
-  const q=String(document.querySelector('#atlasGraphSearch')?.value||'').trim().toLowerCase();
-  cy.batch(()=>{
-    cy.nodes().forEach(n=>{
-      const external=/external|stdlib|standard.?library/i.test(String(n.data('type')||''))||String(n.id()).startsWith('external:');
-      const match=!q||String(n.data('label')||'').toLowerCase().includes(q)||String(n.data('type')||'').toLowerCase().includes(q);
-      n.style('display',(state.hideExternal&&external)||!match?'none':'element');
-    });
-    cy.edges().forEach(e=>{
-      const visible=e.source().style('display')!=='none'&&e.target().style('display')!=='none';
-      e.style('display',visible?'element':'none');
-      e.style('label',state.showEdgeLabels?String(e.data('label')||''):'');
-    });
-  });
-  cy.fit(cy.elements(':visible'),60);
-}
-function toggleFullscreen(){
-  const panel=document.querySelector('.atlas-visual-panel');if(!panel)return;
-  panel.classList.toggle('fullscreen');
-  setTimeout(()=>state.activeCy?.resize(),50);
-  setTimeout(()=>state.activeCy?.fit(state.activeCy.elements(':visible'),60),80);
-}
-async function renderMermaidView(view,meta){
-  const canvas=document.querySelector('#atlasVisualCanvas');
-  if(!canvas)return false;
-  const source=view.presentation?.mermaid_source||view.mermaid_source||'';
-  if(!source||!window.mermaid)return false;
-  try{
-    window.mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:'dark',fontFamily:'Inter, system-ui, sans-serif',suppressErrorRendering:true,maxEdges:1200});
-    const out=await window.mermaid.render(`atlas-mermaid-${Date.now()}`,source);
-    state.mermaidScale=1;
-    canvas.innerHTML=`<div id="atlasMermaidStage" class="atlas-mermaid-stage">${out.svg}</div>`;
-    document.querySelector('#atlasZoomIn')?.addEventListener('click',()=>{state.mermaidScale=Math.min(2.4,state.mermaidScale+.15);document.querySelector('#atlasMermaidStage').style.transform=`scale(${state.mermaidScale})`});
-    document.querySelector('#atlasZoomOut')?.addEventListener('click',()=>{state.mermaidScale=Math.max(.55,state.mermaidScale-.15);document.querySelector('#atlasMermaidStage').style.transform=`scale(${state.mermaidScale})`});
-    document.querySelector('#atlasFit')?.addEventListener('click',()=>{state.mermaidScale=1;document.querySelector('#atlasMermaidStage').style.transform='scale(1)'});
-    return true;
-  }catch{return false}
-}
-async function renderVisual(view,meta){
-  state.activeVisual=view;
-  const panel=document.querySelector('#atlasVisualPanel');if(!panel)return;
-  if(state.activeCy){try{state.activeCy.destroy()}catch{}state.activeCy=null}
-  const stats=view.stats||meta.stats||{nodes:(view.nodes||[]).length,edges:(view.edges||[]).length};
-  const renderer=view.presentation?.renderer||meta.presentation?.renderer||'cytoscape';
-  const diagram=view.presentation?.diagram_type||meta.presentation?.diagram_type||view.diagram_type||view.kind||'network';
-  panel.innerHTML=`<div class="atlas-visual-panel-head">
-    <div><span class="atlas-visual-kind">${esc(diagram)}</span><h2>${esc(view.title||meta.title)}</h2><p>${esc(view.question||view.purpose||meta.purpose||'Repository visual view.')}</p></div>
-    <div class="atlas-visual-counts">${int(stats.nodes)} nodes · ${int(stats.edges)} edges</div>
-  </div>
-  <div class="atlas-graph-toolbar">
-    <input id="atlasGraphSearch" type="search" placeholder="Find node…" aria-label="Find graph node">
-    <button id="atlasExternalToggle" type="button">External: ${state.hideExternal?'hidden':'shown'}</button>
-    <button id="atlasLabelToggle" type="button">Edge labels: ${state.showEdgeLabels?'on':'off'}</button>
-    <button id="atlasZoomOut" type="button">−</button><button id="atlasZoomIn" type="button">+</button>
-    <button id="atlasFit" type="button">Fit</button><button id="atlasRelayout" type="button">Layout</button>
-    <button id="atlasFullscreen" type="button">Expand</button>
-  </div>
-  <div id="atlasVisualCanvas" class="atlas-visual-canvas"></div>
-  <div id="atlasVisualDetail" class="atlas-visual-detail">${graphDetail(null)}</div>`;
-  document.querySelector('#atlasFullscreen')?.addEventListener('click',toggleFullscreen);
-  const mermaidRendered=renderer==='mermaid'&&await renderMermaidView(view,meta);
-  if(mermaidRendered){
-    document.querySelector('#atlasGraphSearch').style.display='none';
-    document.querySelector('#atlasExternalToggle').style.display='none';
-    document.querySelector('#atlasLabelToggle').style.display='none';
-    document.querySelector('#atlasRelayout').style.display='none';
-    return;
-  }
-  const canvas=document.querySelector('#atlasVisualCanvas');
-  if(!window.cytoscape){canvas.innerHTML='<div class="atlas-visual-error">Interactive renderer unavailable.</div>';return}
-  try{
-    const cy=window.cytoscape({container:canvas,elements:cyElements(view),wheelSensitivity:.16,minZoom:.18,maxZoom:3,boxSelectionEnabled:false,style:[
-      {selector:'node',style:{'label':'data(label)','background-color':ele=>typeColor(ele.data('type')),'border-width':1.5,'border-color':'#18202a','color':'#f5f7f9','font-size':12,'font-weight':600,'font-family':'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace','text-wrap':'wrap','text-max-width':170,'text-valign':'center','text-halign':'center','text-outline-width':2.5,'text-outline-color':'#070a0e','width':ele=>Math.max(92,Math.min(168,70+String(ele.data('label')||'').length*2.4)),'height':52,'shape':'round-rectangle'}},
-      {selector:':parent',style:{'background-opacity':.06,'border-width':1.2,'border-style':'dashed','border-color':'#586575','text-valign':'top','text-halign':'center','padding':'28px'}},
-      {selector:'node:selected',style:{'border-width':4,'border-color':'#dcff68','overlay-opacity':0}},
-      {selector:'edge',style:{'width':1.6,'line-color':'#556272','target-arrow-color':'#7a8797','target-arrow-shape':'triangle','curve-style':'taxi','taxi-direction':'rightward','taxi-turn':28,'font-size':10,'color':'#aab4c0','text-background-color':'#070a0e','text-background-opacity':.94,'text-background-padding':4,'arrow-scale':.9}},
-      {selector:'edge[confidence < 0.8]',style:{'line-style':'dashed','line-color':'#9c7652','target-arrow-color':'#9c7652'}},
-      {selector:'edge:selected',style:{'width':3,'line-color':'#dcff68','target-arrow-color':'#dcff68'}}
-    ]});
-    state.activeCy=cy;
-    const run=()=>{try{cy.layout(layoutOptions(view)).run()}catch{cy.layout({name:'cose',fit:true,padding:70,animate:false}).run()}};
-    run();
-    cy.on('tap','node',evt=>{document.querySelector('#atlasVisualDetail').innerHTML=graphDetail(evt.target);track('atlas_visual_node',{repo_id:state.atlas.repo_id,visual_id:view.id,node_id:evt.target.id()})});
-    cy.on('tap',evt=>{if(evt.target===cy)document.querySelector('#atlasVisualDetail').innerHTML=graphDetail(null)});
-    document.querySelector('#atlasGraphSearch')?.addEventListener('input',filterVisualCy);
-    document.querySelector('#atlasExternalToggle')?.addEventListener('click',e=>{state.hideExternal=!state.hideExternal;e.currentTarget.textContent=`External: ${state.hideExternal?'hidden':'shown'}`;filterVisualCy()});
-    document.querySelector('#atlasLabelToggle')?.addEventListener('click',e=>{state.showEdgeLabels=!state.showEdgeLabels;e.currentTarget.textContent=`Edge labels: ${state.showEdgeLabels?'on':'off'}`;filterVisualCy()});
-    document.querySelector('#atlasFit')?.addEventListener('click',()=>cy.fit(cy.elements(':visible'),60));
-    document.querySelector('#atlasRelayout')?.addEventListener('click',run);
-    document.querySelector('#atlasZoomIn')?.addEventListener('click',()=>cy.zoom({level:Math.min(3,cy.zoom()*1.18),renderedPosition:{x:cy.width()/2,y:cy.height()/2}}));
-    document.querySelector('#atlasZoomOut')?.addEventListener('click',()=>cy.zoom({level:Math.max(.18,cy.zoom()/1.18),renderedPosition:{x:cy.width()/2,y:cy.height()/2}}));
-    filterVisualCy();
-  }catch{canvas.innerHTML='<div class="atlas-visual-error">This visual dataset could not be rendered.</div>'}
-}
-async function selectVisual(meta){
-  document.querySelectorAll('.atlas-visual-list-item').forEach(b=>b.classList.toggle('active',b.dataset.visual===meta.id));
-  try{
-    let view=state.visualCache.get(meta.path);
-    if(!view){view=await artifactJson(state.atlas,meta.path);state.visualCache.set(meta.path,view)}
-    await renderVisual(view,meta);
-    track('atlas_visual_open',{repo_id:state.atlas.repo_id,visual_id:meta.id,kind:meta.kind});
-  }catch{document.querySelector('#atlasVisualPanel').innerHTML='<div class="atlas-visual-error">Visual dataset unavailable.</div>'}
-}
-async function renderVisualBrowser(){
-  const surface=document.querySelector('#atlasSurface');if(!surface)return;
-  const views=state.visualIndex?.views||[];
-  if(!views.length){surface.innerHTML='<div class="atlas-empty-surface"><h2>No visual views</h2><p>This Atlas version does not contain visual artifacts.</p></div>';return}
-  surface.innerHTML=`<div class="atlas-visual-browser"><aside class="atlas-visual-list"><div class="atlas-visual-list-head"><strong>Visual Atlas</strong><span>${views.length} views</span></div>${views.map(v=>`<button type="button" class="atlas-visual-list-item" data-visual="${esc(v.id)}"><span>${esc(v.title)}</span><small>${esc(v.presentation?.diagram_type||v.kind||'graph')} · ${int(v.stats?.nodes)} nodes</small><p>${esc(v.purpose||'')}</p></button>`).join('')}</aside><main id="atlasVisualPanel" class="atlas-visual-panel"><div class="atlas-loading-inline">Loading visual…</div></main></div>`;
-  document.querySelectorAll('.atlas-visual-list-item').forEach(b=>b.addEventListener('click',()=>{const v=views.find(x=>x.id===b.dataset.visual);if(v)selectVisual(v)}));
-  await selectVisual(views[0]);
-}
-
-function renderEvidence(){
-  const surface=document.querySelector('#atlasSurface');if(!surface)return;
-  const ev=[...evidenceMap().values()];
-  const {sha}=identity(state.atlas);
-  surface.innerHTML=`<div class="atlas-evidence-page"><div class="atlas-section-intro"><span class="atlas-section-kicker">Evidence</span><h2>Pinned source behind the Atlas</h2><p>Every evidence reference resolves to the immutable repository commit <code>${esc(sha)}</code>.</p></div><div class="atlas-evidence-grid">${ev.map(e=>`<a href="${esc(e.source_url||'#')}" target="_blank" rel="noopener" class="atlas-evidence-card"><span>${esc(e.id)}</span><strong>${esc(e.path||'source')}</strong><small>${e.blob_sha?`blob ${esc(String(e.blob_sha).slice(0,12))}`:'Pinned source'} ↗</small></a>`).join('')}</div></div>`;
-}
-function renderVersions(){
-  const surface=document.querySelector('#atlasSurface');if(!surface)return;
-  const a=state.atlas,{sha}=identity(a);
-  surface.innerHTML=`<div class="atlas-versions-page"><div class="atlas-section-intro"><span class="atlas-section-kicker">Versions</span><h2>Immutable Atlas publication</h2><p>This public page renders the latest registered Atlas. Each generated version is keyed by the source commit SHA and remains immutable in Atlas.</p></div><article class="atlas-version-card"><div><span>Current source</span><code>${esc(sha)}</code><small>${esc(a.last_indexed_at||'')}</small></div><div class="atlas-actions">${action(a.github_docs_url,'Open version in Atlas Git','version_github_open',a.repo_id,true)}${action(a.repo_url,'Open source repository','source_repo_open',a.repo_id)}</div></article></div>`;
-}
-
-async function boot(){
-  const repoId=pathRepo();if(!repoId)return renderNotFound();
-  try{
-    const [index,metrics]=await Promise.all([getJson('/api/atlas-index'),getJson('/api/atlas-metrics').catch(()=>({}))]);
-    const a=(index.repositories||[]).find(x=>String(x.repo_id||'').toLowerCase()===repoId);
-    if(!a)return renderNotFound();
-    state.atlas=a;state.metrics=metrics;
-    await preload(a);
-    renderShell(a,metrics);
-    await showTab(currentTab());
-  }catch{renderNotFound()}
-}
+function defaultDoc(){const pages=allPages();return pages.find(p=>p.path==='docs/overview.md')?.path||pages.find(p=>p.path==='README.md')?.path||pages[0]?.path||'README.md'}
+function docNav(active){const groups=state.navigation?.groups||[];return `<aside class="atlas-doc-sidebar"><div class="atlas-doc-sidebar-head"><strong>Documentation</strong><button id="atlasNavClose" aria-label="Close navigation">×</button></div>${groups.map(g=>`<section class="atlas-doc-nav-group"><h3>${esc(g.title||'Documentation')}</h3>${g.description?`<p>${esc(g.description)}</p>`:''}<div>${(g.pages||[]).map(p=>`<button type="button" class="atlas-doc-link ${p.path===active?'active':''}" data-doc="${esc(p.path)}">${esc(p.title||p.path)}</button>`).join('')}</div></section>`).join('')}</aside>`}
+function docTools(){return `<div class="atlas-doc-tools"><button type="button" id="atlasNavOpen">Contents</button></div>`}
+async function renderDocs(){const surface=document.querySelector('#atlasSurface');if(!surface)return;const requested=requestedDoc(),initial=docExists(requested)?requested:defaultDoc();surface.innerHTML=`<div class="atlas-doc-app">${docNav(initial)}<main class="atlas-doc-main">${docTools()}<article id="atlasArticle" class="atlas-article"><div class="atlas-loading-inline">Loading documentation…</div></article></main><aside id="atlasToc" class="atlas-toc"></aside></div>`;bindDocNav();await openDoc(initial,false)}
+function bindDocNav(){document.querySelectorAll('.atlas-doc-link').forEach(b=>b.addEventListener('click',()=>openDoc(b.dataset.doc,true)));document.querySelector('#atlasNavOpen')?.addEventListener('click',()=>document.querySelector('.atlas-doc-sidebar')?.classList.add('open'));document.querySelector('#atlasNavClose')?.addEventListener('click',()=>document.querySelector('.atlas-doc-sidebar')?.classList.remove('open'))}
+function slugify(s){return String(s||'section').toLowerCase().trim().replace(/<[^>]+>/g,'').replace(/[^a-z0-9\s-]/g,'').replace(/\s+/g,'-').replace(/-+/g,'-').slice(0,80)||'section'}
+function renderMarkdown(md){if(!window.marked||!window.DOMPurify)return `<pre>${esc(md)}</pre>`;return window.DOMPurify.sanitize(window.marked.parse(String(md||''),{gfm:true,breaks:false}),{USE_PROFILES:{html:true},ADD_ATTR:['target','rel']})}
+function evidenceMap(){const ev=state.graph?.deterministic?.evidence||state.graph?.evidence||[];return new Map(ev.map(e=>[String(e.id),e]))}
+function decorateEvidence(article){const map=evidenceMap();if(!map.size)return;const walker=document.createTreeWalker(article,NodeFilter.SHOW_TEXT),nodes=[];let n;while((n=walker.nextNode())){if(/\[E\d{3,}\]/.test(n.nodeValue||'')&&!n.parentElement?.closest('code,pre,a,button'))nodes.push(n)}for(const textNode of nodes){const text=textNode.nodeValue||'',frag=document.createDocumentFragment();let last=0;text.replace(/\[(E\d{3,})\]/g,(m,id,offset)=>{if(offset>last)frag.append(document.createTextNode(text.slice(last,offset)));const rec=map.get(id);if(rec){const b=document.createElement('button');b.type='button';b.className='atlas-evidence-ref';b.textContent=`[${id}]`;b.title=`${rec.path||id} · pinned source`;b.addEventListener('click',()=>rec.source_url&&window.open(rec.source_url,'_blank','noopener'));frag.append(b)}else frag.append(document.createTextNode(m));last=offset+m.length;return m});if(last<text.length)frag.append(document.createTextNode(text.slice(last)));textNode.replaceWith(frag)}}
+function decorateHeadings(article){const used=new Set();for(const h of article.querySelectorAll('h1,h2,h3')){let id=slugify(h.textContent),i=2;while(used.has(id))id=`${id}-${i++}`;used.add(id);h.id=id;const a=document.createElement('a');a.className='atlas-heading-anchor';a.href=`#${id}`;a.textContent='#';a.setAttribute('aria-label','Link to section');h.append(a)}}
+function buildToc(article){const toc=document.querySelector('#atlasToc');if(!toc)return;const hs=[...article.querySelectorAll('h2,h3')];toc.innerHTML=hs.length?`<div class="atlas-toc-inner"><strong>On this page</strong>${hs.map(h=>`<a class="${h.tagName==='H3'?'sub':''}" href="#${esc(h.id)}">${esc(h.childNodes[0]?.textContent||h.textContent.replace(/#$/,''))}</a>`).join('')}</div>`:''}
+function resolveDocHref(current,href){if(!href||href.startsWith('#')||/^[a-z][a-z0-9+.-]*:/i.test(href))return null;try{const u=new URL(href,`https://atlas.local/${current}`),path=decodeURIComponent(u.pathname.replace(/^\//,''));return docExists(path)?path:null}catch{return null}}
+function bindArticleLinks(article,current){article.querySelectorAll('a[href]').forEach(a=>{const href=a.getAttribute('href')||'',doc=resolveDocHref(current,href);if(doc){a.addEventListener('click',e=>{e.preventDefault();openDoc(doc,true)});return}if(/^https?:/i.test(href)){a.target='_blank';a.rel='noopener'}})}
+async function renderMermaidBlocks(article){if(!window.mermaid)return;const blocks=[...article.querySelectorAll('pre code.language-mermaid,code.language-mermaid')];if(!blocks.length)return;try{window.mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:'dark',fontFamily:'Inter, system-ui, sans-serif',suppressErrorRendering:true,flowchart:{htmlLabels:false,useMaxWidth:true},sequence:{useMaxWidth:true}})}catch{}let i=0;for(const code of blocks){const pre=code.closest('pre')||code,holder=document.createElement('div');holder.className='atlas-inline-mermaid';try{const id=`atlas-inline-mermaid-${Date.now()}-${i++}`,out=await window.mermaid.render(id,code.textContent||'');holder.innerHTML=out.svg}catch{holder.innerHTML=`<div class="atlas-diagram-error">Diagram could not be rendered. Source preserved below.</div><pre><code>${esc(code.textContent||'')}</code></pre>`}pre.replaceWith(holder)}}
+async function openDoc(path,push=true){if(!docExists(path))path=defaultDoc();state.activeDoc=path;document.querySelectorAll('.atlas-doc-link').forEach(b=>b.classList.toggle('active',b.dataset.doc===path));document.querySelector('.atlas-doc-sidebar')?.classList.remove('open');const article=document.querySelector('#atlasArticle');if(!article)return;article.innerHTML='<div class="atlas-loading-inline">Loading documentation…</div>';try{let md=state.docCache.get(path);if(md===undefined){md=await artifactText(state.atlas,path);state.docCache.set(path,md)}article.innerHTML=renderMarkdown(md);decorateHeadings(article);decorateEvidence(article);bindArticleLinks(article,path);await renderMermaidBlocks(article);buildToc(article);if(push)setUrl('docs',path);track('atlas_doc_open',{repo_id:state.atlas.repo_id,path});window.scrollTo({top:root.offsetTop-20,behavior:'smooth'})}catch{article.innerHTML='<div class="atlas-doc-error"><h2>Document unavailable</h2><p>This Atlas document could not be loaded.</p></div>'}}
+function basename(path){const p=String(path||'').replace(/\\/g,'/');return p.split('/').filter(Boolean).pop()||p}
+function shortLabel(node){const raw=String(node?.display_label||node?.semantic_label||node?.label||node?.id||'');if(node?.type==='repository')return raw.includes('/')?raw.split('/').pop():raw;if(raw.includes('/'))return basename(raw);const stripped=raw.replace(/^external:/,'').replace(/^file:/,'').replace(/^dir:/,'');if(stripped.startsWith('.')&&stripped.length<30)return stripped.slice(1);if(stripped.length>34&&stripped.includes('.')){const parts=stripped.split('.');return parts.slice(-2).join('.')}return stripped.length>38?`${stripped.slice(0,35)}…`:stripped}
+function typeColor(t){const x=String(t||'').toLowerCase();if(/repository|system|root/.test(x))return '#dcff68';if(/external|third-party|dependency|deploy/.test(x))return '#ffae42';if(/evidence|source|document/.test(x))return '#b76cff';if(/state|data|store|memory/.test(x))return '#38ddff';if(/decision|guard|security/.test(x))return '#ff6f91';if(/actor|service|module|component|directory|file|step|event/.test(x))return '#51fa8d';return '#aeb8c4'}
+function isExternalNode(n){const t=String(n?.type||'').toLowerCase();return /external|third-party|stdlib/.test(t)||String(n?.id||'').startsWith('external:')}
+function layoutOptions(view){const family=String(view?.layout?.family||'force'),direction={LR:'RIGHT',RL:'LEFT',TB:'DOWN',BT:'UP'}[view?.layout?.direction]||'RIGHT';if(family==='tree')return {name:'breadthfirst',directed:true,fit:true,padding:80,spacingFactor:1.65,avoidOverlap:true};if(family==='layered')return {name:'elk',fit:true,padding:80,nodeDimensionsIncludeLabels:true,elk:{algorithm:'layered','elk.direction':direction,'elk.edgeRouting':'ORTHOGONAL','elk.spacing.nodeNode':'72','elk.layered.spacing.nodeNodeBetweenLayers':'110','elk.layered.spacing.edgeNodeBetweenLayers':'55'}};if(family==='radial')return {name:'concentric',fit:true,padding:80,minNodeSpacing:72,levelWidth:()=>2,concentric:n=>Number(n.data('importance')||.5)};if(family==='grid')return {name:'grid',fit:true,padding:80,avoidOverlap:true,spacingFactor:1.35};return {name:'cose',fit:true,padding:80,animate:false,nodeRepulsion:18000,idealEdgeLength:180,edgeElasticity:.12,gravity:.22,numIter:1800}}
+function filteredView(view){if(!state.hideExternal)return view;const nodes=(view.nodes||[]).filter(n=>!isExternalNode(n));const ids=new Set(nodes.map(n=>String(n.id)));const edges=(view.edges||[]).filter(e=>ids.has(String(e.source??e.from))&&ids.has(String(e.target??e.to)));return {...view,nodes,edges}}
+function cyElements(view){const nodes=(view.nodes||[]).map(n=>({data:{id:String(n.id),label:shortLabel(n),full_label:String(n.label||n.id),type:String(n.type||'entity'),group:String(n.group||''),importance:Number(n.importance??.5),evidence_refs:n.evidence_refs||[],source_paths:n.source_paths||[]}}));const edges=(view.edges||[]).map((e,i)=>({data:{id:String(e.id||`e-${i}`),source:String(e.source??e.from),target:String(e.target??e.to),label:String(e.label||''),type:String(e.type||'related_to'),confidence:Number(e.confidence??1),evidence_refs:e.evidence_refs||[]}}));return [...nodes,...edges]}
+function evidenceButton(id){const rec=evidenceMap().get(String(id));return rec?.source_url?`<a class="atlas-evidence-chip" href="${esc(rec.source_url)}" target="_blank" rel="noopener">${esc(id)} · ${esc(basename(rec.path||''))} ↗</a>`:`<span class="atlas-evidence-chip">${esc(id)}</span>`}
+function visualDetail(view,node){if(!node)return `<div class="atlas-detail-empty">Select a node to inspect its exact path, semantic type, and evidence.</div>`;const d=node.data(),paths=Array.isArray(d.source_paths)?d.source_paths:[],refs=Array.isArray(d.evidence_refs)?d.evidence_refs:[];return `<div class="atlas-visual-detail-card"><div><span>Selected</span><h4>${esc(d.label)}</h4><p>${esc(d.type||'entity')}</p></div>${paths.length?`<div><span>Exact source</span>${paths.map(x=>`<code>${esc(x)}</code>`).join('')}</div>`:''}${refs.length?`<div><span>Evidence</span><div class="atlas-inline-evidence">${refs.map(r=>evidenceButton(r)).join('')}</div></div>`:''}</div>`}
+function diagramType(view,meta){return String(view?.diagram_type||view?.visual_type||meta?.diagram_type||'').toLowerCase()}
+function mermaidSafeId(s){return 'n_'+String(s).replace(/[^a-zA-Z0-9_]/g,'_').slice(0,50)}
+function mermaidLabel(s){return String(s||'').replace(/["\n\r]/g,' ').replace(/[<>]/g,'').slice(0,80)}
+function mermaidFromView(view,type){const nodes=view.nodes||[],edges=view.edges||[],byId=new Map(nodes.map(n=>[String(n.id),n]));if(type==='sequence'||type==='sequence-diagram'){const ids=[...new Set(edges.flatMap(e=>[String(e.source),String(e.target)]))].filter(id=>byId.has(id));const lines=['sequenceDiagram'];for(const id of ids)lines.push(`participant ${mermaidSafeId(id)} as ${mermaidLabel(shortLabel(byId.get(id)))}`);for(const e of edges)if(byId.has(String(e.source))&&byId.has(String(e.target)))lines.push(`${mermaidSafeId(e.source)}->>${mermaidSafeId(e.target)}: ${mermaidLabel(e.label||e.type||'next')}`);return lines.join('\n')}if(type==='state'||type==='state-diagram'){const lines=['stateDiagram-v2'];for(const n of nodes)lines.push(`state "${mermaidLabel(shortLabel(n))}" as ${mermaidSafeId(n.id)}`);for(const e of edges)lines.push(`${mermaidSafeId(e.source)} --> ${mermaidSafeId(e.target)}${e.label?`: ${mermaidLabel(e.label)}`:''}`);return lines.join('\n')}if(type==='class'||type==='class-diagram'){const lines=['classDiagram'];for(const n of nodes)lines.push(`class ${mermaidSafeId(n.id)}`);for(const e of edges)lines.push(`${mermaidSafeId(e.source)} --> ${mermaidSafeId(e.target)} : ${mermaidLabel(e.label||e.type||'relates')}`);return lines.join('\n')}if(type==='er'||type==='entity-relationship'){const lines=['erDiagram'];for(const e of edges)lines.push(`${mermaidSafeId(e.source)} ||--o{ ${mermaidSafeId(e.target)} : "${mermaidLabel(e.label||e.type||'relates')}"`);return lines.join('\n')}if(type==='mindmap'){const incoming=new Set(edges.map(e=>String(e.target))),rootNode=nodes.find(n=>!incoming.has(String(n.id)))||nodes[0];if(!rootNode)return '';const children=new Map();for(const e of edges){const a=String(e.source),b=String(e.target);if(!children.has(a))children.set(a,[]);children.get(a).push(b)}const lines=['mindmap',`  root((${mermaidLabel(shortLabel(rootNode))}))`],seen=new Set([String(rootNode.id)]);function walk(id,depth){for(const cid of children.get(id)||[]){if(seen.has(cid)||depth>4)continue;seen.add(cid);const n=byId.get(cid);if(!n)continue;lines.push(`${'  '.repeat(depth+1)}${mermaidLabel(shortLabel(n))}`);walk(cid,depth+1)}}walk(String(rootNode.id),1);return lines.join('\n')}return ''}
+async function renderMermaidVisual(view,meta){const shell=document.querySelector('#atlasVisualCanvas');if(!shell||!window.mermaid)return false;const type=diagramType(view,meta),src=mermaidFromView(view,type);if(!src)return false;try{window.mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:'dark',fontFamily:'Inter, system-ui, sans-serif',suppressErrorRendering:true,flowchart:{htmlLabels:false,useMaxWidth:true},sequence:{useMaxWidth:true}});const out=await window.mermaid.render(`atlas-visual-${Date.now()}`,src);shell.innerHTML=`<div class="atlas-mermaid-stage">${out.svg}</div>`;return true}catch{return false}}
+async function renderVisual(view,meta){state.activeVisual={view,meta};const visible=filteredView(view),canvas=document.querySelector('#atlasVisualCanvas'),detail=document.querySelector('#atlasVisualDetail');if(!canvas)return;if(state.activeCy){try{state.activeCy.destroy()}catch{}state.activeCy=null}canvas.innerHTML='';if(detail)detail.innerHTML=visualDetail(view,null);const type=diagramType(view,meta);if(['sequence','sequence-diagram','state','state-diagram','class','class-diagram','er','entity-relationship','mindmap'].includes(type)){const ok=await renderMermaidVisual(visible,meta);if(ok)return}if(!window.cytoscape){canvas.innerHTML='<div class="atlas-visual-error">Interactive renderer unavailable.</div>';return}try{const cy=window.cytoscape({container:canvas,elements:cyElements(visible),wheelSensitivity:.14,minZoom:.15,maxZoom:3.5,boxSelectionEnabled:false,style:[{selector:'node',style:{'label':'data(label)','background-color':ele=>typeColor(ele.data('type')),'border-width':1.5,'border-color':'#111820','color':'#f5f7f9','font-size':13,'font-weight':650,'font-family':'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace','text-wrap':'wrap','text-max-width':150,'text-valign':'center','text-halign':'center','width':ele=>clamp(92+String(ele.data('label')||'').length*2.8,110,185),'height':58,'shape':'round-rectangle'}},{selector:'node:selected',style:{'border-width':4,'border-color':'#dcff68','overlay-opacity':0}},{selector:'edge',style:{'width':1.6,'line-color':'#556272','target-arrow-color':'#7a8797','target-arrow-shape':'triangle','curve-style':'bezier','font-size':10,'color':'#c1cad4','text-background-color':'#070a0e','text-background-opacity':.95,'text-background-padding':4,'arrow-scale':.9}},{selector:'edge[confidence < 0.8]',style:{'line-style':'dashed','line-color':'#9c7652','target-arrow-color':'#9c7652'}},{selector:'edge:selected',style:{'width':3,'line-color':'#dcff68','target-arrow-color':'#dcff68'}},{selector:'.atlas-dim',style:{'opacity':.12}},{selector:'.atlas-search-hit',style:{'border-color':'#dcff68','border-width':4}}]});state.activeCy=cy;const setLabels=()=>cy.style().selector('edge').style('label',state.showEdgeLabels?'data(label)':'').update();setLabels();const run=()=>{try{cy.layout(layoutOptions(visible)).run()}catch{cy.layout({name:'cose',fit:true,padding:80,animate:false}).run()}};run();cy.on('tap','node',evt=>{const selected=evt.target;detail.innerHTML=visualDetail(view,selected);cy.elements().removeClass('atlas-dim atlas-search-hit');cy.elements().difference(selected.closedNeighborhood()).addClass('atlas-dim');track('atlas_visual_node',{repo_id:state.atlas.repo_id,visual_id:view.id,node_id:selected.id()})});cy.on('tap',evt=>{if(evt.target===cy){cy.elements().removeClass('atlas-dim atlas-search-hit');detail.innerHTML=visualDetail(view,null)}});state.visualControls={run,setLabels}}catch{canvas.innerHTML='<div class="atlas-visual-error">This visual could not be rendered.</div>'}}
+function bindVisualControls(){document.querySelector('#atlasVisualFit')?.addEventListener('click',()=>state.activeCy?.fit(undefined,85));document.querySelector('#atlasVisualLayout')?.addEventListener('click',()=>state.visualControls?.run?.());document.querySelector('#atlasEdgeLabels')?.addEventListener('click',e=>{state.showEdgeLabels=!state.showEdgeLabels;e.currentTarget.classList.toggle('active',state.showEdgeLabels);state.visualControls?.setLabels?.()});document.querySelector('#atlasExternalToggle')?.addEventListener('click',async e=>{state.hideExternal=!state.hideExternal;e.currentTarget.classList.toggle('active',state.hideExternal);if(state.activeVisual)await renderVisual(state.activeVisual.view,state.activeVisual.meta)});document.querySelector('#atlasVisualExpand')?.addEventListener('click',()=>document.querySelector('.atlas-visual-stage')?.classList.toggle('expanded'));document.querySelector('#atlasVisualSearch')?.addEventListener('input',e=>{const q=e.target.value.trim().toLowerCase(),cy=state.activeCy;if(!cy)return;cy.elements().removeClass('atlas-dim atlas-search-hit');if(!q)return;const hits=cy.nodes().filter(n=>String(n.data('label')||'').toLowerCase().includes(q)||String(n.data('full_label')||'').toLowerCase().includes(q));cy.elements().difference(hits.union(hits.connectedEdges())).addClass('atlas-dim');hits.addClass('atlas-search-hit');if(hits.length)cy.fit(hits,120)})}
+async function chooseVisual(meta,button){document.querySelectorAll('.atlas-visual-list-item').forEach(b=>b.classList.toggle('active',b===button));const title=document.querySelector('#atlasVisualTitle'),purpose=document.querySelector('#atlasVisualPurpose'),stats=document.querySelector('#atlasVisualStats');if(title)title.textContent=meta.title||meta.id;if(purpose)purpose.textContent=meta.purpose||'';if(stats)stats.textContent=`${int(meta.stats?.nodes)} nodes · ${int(meta.stats?.edges)} edges${meta.diagram_type?` · ${meta.diagram_type}`:''}`;try{let view=state.visualCache.get(meta.path);if(!view){view=await artifactJson(state.atlas,meta.path);state.visualCache.set(meta.path,view)}await renderVisual(view,meta);track('atlas_visual_open',{repo_id:state.atlas.repo_id,visual_id:meta.id,kind:meta.kind})}catch{document.querySelector('#atlasVisualCanvas').innerHTML='<div class="atlas-visual-error">This visual dataset is unavailable.</div>'}}
+async function renderVisualBrowser(){const surface=document.querySelector('#atlasSurface'),views=state.visualIndex?.views||[];if(!surface)return;if(!views.length){surface.innerHTML='<div class="atlas-empty-state"><h2>No visuals published</h2><p>This Atlas version does not contain visual views.</p></div>';return}surface.innerHTML=`<div class="atlas-visual-browser"><aside class="atlas-visual-list"><div class="atlas-visual-list-head"><span>Visual Atlas</span><strong>${views.length} views</strong></div>${views.map((v,i)=>`<button class="atlas-visual-list-item ${i===0?'active':''}" data-visual="${i}"><span>${esc(v.title||v.id)}</span><small>${esc(v.kind||v.diagram_type||'visual')} · ${int(v.stats?.nodes)} nodes</small></button>`).join('')}</aside><main class="atlas-visual-main"><div class="atlas-visual-main-head"><div><span class="atlas-section-kicker">Visual intelligence</span><h2 id="atlasVisualTitle"></h2><p id="atlasVisualPurpose"></p></div><div id="atlasVisualStats" class="atlas-visual-stats"></div></div><div class="atlas-visual-toolbar"><input id="atlasVisualSearch" type="search" placeholder="Find node…"><button id="atlasExternalToggle" class="active">Hide externals</button><button id="atlasEdgeLabels">Edge labels</button><button id="atlasVisualFit">Fit</button><button id="atlasVisualLayout">Layout</button><button id="atlasVisualExpand">Expand</button></div><section class="atlas-visual-stage"><div id="atlasVisualCanvas" class="atlas-visual-canvas"></div></section><div id="atlasVisualDetail" class="atlas-visual-detail-row"></div></main></div>`;bindVisualControls();document.querySelectorAll('.atlas-visual-list-item').forEach((b,i)=>b.addEventListener('click',()=>chooseVisual(views[i],b)));await chooseVisual(views[0],document.querySelector('.atlas-visual-list-item'))}
+function scoreTone(score){const n=Number(score);return n>=80?'strong':n>=65?'solid':n>=50?'watch':'risk'}
+function confidenceLabel(c){const n=Number(c);return n>=.75?'high confidence':n>=.55?'medium confidence':'limited evidence'}
+function metricByName(score){return new Map((score.metrics||[]).map(m=>[String(m.name),m]))}
+function groupCards(score){return Object.entries(score.groups||{}).map(([name,g])=>`<article class="atlas-score-group ${scoreTone(g.score)}"><div><span>${esc(name)}</span><strong>${Number(g.score||0).toFixed(0)}</strong></div><div class="atlas-score-bar"><i style="width:${clamp(Number(g.score||0),0,100)}%"></i></div><small>${(g.metrics||[]).length} metrics · ${Math.round(Number(g.weight||0)*100)}% weight</small></article>`).join('')}
+function strengthRiskLists(score){const metrics=(score.metrics||[]).filter(m=>m.applicability==='applicable'&&Number.isFinite(Number(m.score)));const strengths=[...metrics].filter(m=>Number(m.confidence||0)>=.55).sort((a,b)=>Number(b.score)-Number(a.score)).slice(0,5),risks=[...metrics].filter(m=>Number(m.confidence||0)>=.5).sort((a,b)=>Number(a.score)-Number(b.score)).slice(0,5);const item=m=>`<li><div><strong>${esc(m.name)}</strong><span>${Number(m.score).toFixed(0)}</span></div><p>${esc(String(m.rationale||'').split(/(?<=[.!?])\s+/)[0]||'')}</p></li>`;return `<div class="atlas-score-insights"><section><span class="atlas-section-kicker">Strengths</span><h3>What is working</h3><ul>${strengths.map(item).join('')}</ul></section><section><span class="atlas-section-kicker">Watch areas</span><h3>Where attention pays off</h3><ul>${risks.map(item).join('')}</ul></section></div>`}
+function prioritizedActions(score){const metrics=(score.metrics||[]).filter(m=>m.applicability==='applicable'&&Array.isArray(m.improvement_opportunities)&&m.improvement_opportunities.length).sort((a,b)=>Number(a.score||100)-Number(b.score||100));const seen=new Set(),actions=[];for(const m of metrics){for(const text of m.improvement_opportunities){const key=String(text).trim().toLowerCase();if(!key||seen.has(key))continue;seen.add(key);actions.push({metric:m.name,score:m.score,text:String(text)});if(actions.length>=8)break}if(actions.length>=8)break}if(!actions.length)return '';return `<section class="atlas-score-actions"><div class="atlas-section-intro compact"><span class="atlas-section-kicker">Prioritized improvements</span><h3>Highest-leverage next actions</h3><p>Repository improvements only. Foundry generation failures are kept out of this list.</p></div><div class="atlas-action-list">${actions.map((a,i)=>`<article><b>${String(i+1).padStart(2,'0')}</b><div><strong>${esc(a.text)}</strong><span>${esc(a.metric)} · score ${Number(a.score||0).toFixed(0)}</span></div></article>`).join('')}</div></section>`}
+function metricDetails(score){const by=metricByName(score);return Object.entries(score.groups||{}).map(([group,g])=>`<section class="atlas-metric-group"><header><h3>${esc(group)}</h3><span>${Number(g.score||0).toFixed(0)} / 100</span></header><div>${(g.metrics||[]).map(name=>{const m=by.get(String(name));if(!m)return '';const val=m.applicability==='applicable'&&Number.isFinite(Number(m.score))?Number(m.score).toFixed(0):'N/A';return `<details class="atlas-metric-detail"><summary><span>${esc(m.name)}</span><span class="atlas-metric-score ${scoreTone(m.score)}">${val}</span><small>${esc(confidenceLabel(m.confidence))}</small></summary><div class="atlas-metric-body"><p>${esc(m.rationale||'')}</p>${(m.evidence_refs||[]).length?`<div class="atlas-inline-evidence">${m.evidence_refs.map(evidenceButton).join('')}</div>`:''}${(m.improvement_opportunities||[]).length?`<div class="atlas-metric-opportunities"><strong>Potential improvements</strong><ul>${m.improvement_opportunities.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`:''}</div></details>`}).join('')}</div></section>`).join('')}
+async function renderScorecard(){const surface=document.querySelector('#atlasSurface');if(!surface)return;surface.innerHTML='<div class="atlas-loading-inline">Loading scorecard…</div>';try{const score=state.scorecard||await artifactJson(state.atlas,'scorecard.json');state.scorecard=score;const total=Number(score.foundry_score??state.atlas.foundry_score??0),conf=Number(score.confidence??state.atlas.score_confidence??0);surface.innerHTML=`<div class="atlas-score-page"><section class="atlas-score-hero"><div class="atlas-score-number"><strong>${total.toFixed(0)}</strong><span>/ 100</span></div><div><span class="atlas-section-kicker">Foundry scorecard</span><h2>Repository quality at a glance</h2><p>Evidence-backed category scores first; detailed rationales stay expandable so the page remains readable.</p><div class="atlas-score-confidence">${Math.round(conf*100)}% confidence · ${esc(confidenceLabel(conf))}</div></div></section><section class="atlas-score-groups">${groupCards(score)}</section>${strengthRiskLists(score)}${prioritizedActions(score)}<section class="atlas-score-detail-section"><div class="atlas-section-intro compact"><span class="atlas-section-kicker">Metric detail</span><h3>Open only what you need</h3><p>Detailed rationale, evidence and improvement opportunities are collapsed by default.</p></div>${metricDetails(score)}</section></div>`;track('atlas_scorecard_open',{repo_id:state.atlas.repo_id})}catch{surface.innerHTML='<div class="atlas-doc-error"><h2>Scorecard unavailable</h2><p>The machine-readable scorecard could not be loaded.</p></div>'}}
+function renderEvidence(){const surface=document.querySelector('#atlasSurface');if(!surface)return;const ev=[...evidenceMap().values()],{sha}=identity(state.atlas),warnings=Array.isArray(state.manifest?.warnings)?state.manifest.warnings:[];surface.innerHTML=`<div class="atlas-evidence-page"><div class="atlas-section-intro"><span class="atlas-section-kicker">Evidence</span><h2>Pinned source behind the Atlas</h2><p>Evidence references resolve to immutable source material at commit <code>${esc(sha)}</code>.</p></div><div class="atlas-evidence-grid">${ev.map(e=>`<a href="${esc(e.source_url||'#')}" target="_blank" rel="noopener" class="atlas-evidence-card"><span>${esc(e.id)}</span><strong>${esc(basename(e.path||'source'))}</strong><code>${esc(e.path||'')}</code><small>${e.blob_sha?`blob ${esc(String(e.blob_sha).slice(0,12))}`:'Pinned source'} ↗</small></a>`).join('')}</div>${warnings.length?`<section class="atlas-generation-notes"><span class="atlas-section-kicker">Atlas generation diagnostics</span><h3>Pipeline notes, not repository recommendations</h3><p>These describe limitations or recoveries in this Atlas run. They are deliberately separated from the repository scorecard.</p><ul>${warnings.map(w=>`<li>${esc(w)}</li>`).join('')}</ul></section>`:''}</div>`}
+function renderVersions(){const surface=document.querySelector('#atlasSurface');if(!surface)return;const a=state.atlas,{sha}=identity(a);surface.innerHTML=`<div class="atlas-versions-page"><div class="atlas-section-intro"><span class="atlas-section-kicker">Versions</span><h2>Immutable Atlas publication</h2><p>Each generated version is keyed by the source commit SHA and remains immutable in Atlas.</p></div><article class="atlas-version-card"><div><span>Current source</span><code>${esc(sha)}</code><small>${esc(a.last_indexed_at||'')}</small></div><div class="atlas-actions">${action(a.github_docs_url,'Open version in Atlas Git','version_github_open',a.repo_id,true)}${action(a.repo_url,'Open source repository','source_repo_open',a.repo_id)}</div></article></div>`}
+async function boot(){const repoId=pathRepo();if(!repoId)return renderNotFound();try{const [ix,metrics]=await Promise.all([getJson('/api/atlas-index'),getJson('/api/atlas-metrics').catch(()=>({}))]);const a=(ix.repositories||[]).find(r=>String(r.repo_id||'').toLowerCase()===repoId);if(!a)return renderNotFound();state.atlas=a;state.metrics=metrics;await preload(a);renderShell(a,metrics);await showTab(currentTab())}catch{renderNotFound()}}
 window.addEventListener('popstate',()=>showTab(currentTab()));
 boot();
